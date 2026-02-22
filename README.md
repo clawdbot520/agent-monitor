@@ -13,6 +13,7 @@ A macOS desktop app for monitoring AI agent conversations in real time. Supports
 - **Search** — filter messages by keyword with inline highlighting
 - **Tooltips** — hover any toolbar button for 1-second delayed label
 - **Persistent settings** — panel widths, active source, and folder paths saved across restarts
+- **Smart message parsing** — automatically strips Telegram bridge metadata headers, showing only the actual message content
 
 ## Requirements
 
