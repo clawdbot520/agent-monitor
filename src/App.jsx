@@ -112,6 +112,7 @@ function App() {
   const handleRefresh = () => {
     fetchAgents()
     if (selectedAgent) fetchSessions(selectedAgent)
+    if (selectedAgent && selectedSession) fetchLogs(selectedAgent, selectedSession)
   }
 
   const saveSettings = () => {
