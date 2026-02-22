@@ -352,8 +352,16 @@ function App() {
 
                   let displayContent = content
                   if (role === 'user') {
+                    // Format 1: \n\n[context] message
                     const match = content.match(/\n\n\[.+\]\s*(.+)$/s)
-                    if (match) displayContent = match[1].trim()
+                    if (match) {
+                      displayContent = match[1].trim()
+                    } else if (content.includes('```')) {
+                      // Format 2: metadata JSON blocks, actual message comes after last ```
+                      const parts = content.split('```')
+                      const lastPart = parts[parts.length - 1].trim()
+                      if (lastPart) displayContent = lastPart
+                    }
                   }
 
                   const hasText = displayContent && displayContent.trim() !== ''
