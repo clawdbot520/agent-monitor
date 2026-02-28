@@ -17,24 +17,33 @@ body {
   background: #1c1c1e;
   color: rgba(255,255,255,0.88);
   overflow: hidden;
+  position: relative;
 }
 
-/* ── Titlebar (lighter strip on top) ── */
+/* ── Traffic light zone (top strip) ── */
+.traffic-zone {
+  height: 38px;
+  flex-shrink: 0;
+  background: linear-gradient(to bottom, #424245, #333336);
+  -webkit-app-region: drag;
+}
+
+/* ── Toolbar ── */
 .titlebar {
   display: flex;
-  height: 50px;
+  height: 54px;
   flex-shrink: 0;
   -webkit-app-region: drag;
-  background: #323235;
-  border-bottom: 1px solid rgba(0,0,0,0.35);
+  background: #2a2a2d;
+  border-bottom: 1px solid rgba(0,0,0,0.4);
 }
 
 .titlebar-agents {
   display: flex;
   align-items: center;
-  padding: 0 16px 0 80px;
+  justify-content: space-between;
+  padding: 0 8px 0 16px;
   flex-shrink: 0;
-  padding-top: 18px;
 }
 
 .titlebar-sessions {
@@ -42,7 +51,12 @@ body {
   align-items: center;
   padding: 0 16px;
   flex-shrink: 0;
-  padding-top: 18px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.35);
 }
 
 .titlebar-main {
@@ -51,7 +65,6 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  padding-top: 18px;
 }
 
 .titlebar-label {
@@ -76,8 +89,8 @@ body {
 /* ── Flat icon buttons (no box) ── */
 .icon-btn {
   -webkit-app-region: no-drag;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -157,15 +170,25 @@ body {
 }
 
 .resize-handle {
-  width: 4px;
+  width: 1px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: rgba(0,0,0,0.3);
+  background: rgba(0,0,0,0.35);
   transition: background 0.15s;
+  position: relative;
+}
+
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
 }
 
 .resize-handle:hover {
-  background: rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.12);
 }
 
 .agent-list {
@@ -204,6 +227,18 @@ body {
   color: #fff;
   flex-shrink: 0;
   margin-right: 10px;
+  position: relative;
+}
+
+.agent-dot {
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #32d74b;
+  border: 2px solid #232326;
 }
 
 .agent-name {
@@ -216,6 +251,13 @@ body {
   font-size: 11px;
   color: rgba(255,255,255,0.35);
   margin-top: 1px;
+}
+
+.agent-tokens {
+  font-size: 10px;
+  color: rgba(255,255,255,0.25);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  margin-top: 2px;
 }
 
 /* ── Sessions panel ── */
@@ -245,7 +287,7 @@ body {
 }
 
 .session-item:hover { background: rgba(255,255,255,0.04); }
-.session-item.active { background: rgba(10,132,255,0.15); }
+.session-item.active { background: rgba(10,132,255,0.28); }
 
 .session-date {
   font-size: 12px;
@@ -262,6 +304,13 @@ body {
 .session-id {
   font-size: 10px;
   color: rgba(255,255,255,0.18);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  margin-top: 2px;
+}
+
+.session-tokens {
+  font-size: 10px;
+  color: rgba(255,255,255,0.25);
   font-family: 'SF Mono', 'Menlo', monospace;
   margin-top: 2px;
 }
@@ -289,12 +338,30 @@ body {
 /* ── Log entries ── */
 .log-entries { padding: 0; }
 
+/* ── Date separator ── */
+.date-separator {
+  display: flex;
+  justify-content: center;
+  padding: 12px 20px 6px;
+}
+
+.date-separator span {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  background: rgba(255,255,255,0.07);
+  padding: 3px 12px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
 .log-entry {
   display: flex;
   flex-direction: column;
   padding: 0 20px;
-  margin-bottom: 3px;
+  margin-bottom: 8px;
 }
+
+.log-entry.tight { margin-bottom: 2px; }
 
 .log-entry.log-user { align-items: flex-end; }
 .log-entry.log-assistant { align-items: flex-start; }
@@ -322,7 +389,7 @@ body {
 .log-message-bubble {
   max-width: 72%;
   padding: 9px 13px;
-  border-radius: 16px;
+  border-radius: 18px;
   font-size: 13px;
   line-height: 1.55;
 }
@@ -330,13 +397,32 @@ body {
 .log-user .log-message-bubble {
   background: #0a84ff;
   color: #fff;
-  border-bottom-right-radius: 5px;
+  border-bottom-right-radius: 4px;
 }
 
 .log-assistant .log-message-bubble {
   background: rgba(255,255,255,0.08);
   color: rgba(255,255,255,0.88);
-  border-bottom-left-radius: 5px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+
+/* ── Bubble grouping ── */
+.log-user .log-message-bubble.bubble-first { border-bottom-right-radius: 6px; }
+.log-user .log-message-bubble.bubble-mid { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+.log-user .log-message-bubble.bubble-last { border-top-right-radius: 6px; }
+
+.log-assistant .log-message-bubble.bubble-first { border-bottom-left-radius: 6px; }
+.log-assistant .log-message-bubble.bubble-mid { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.log-assistant .log-message-bubble.bubble-last { border-top-left-radius: 6px; }
+
+/* ── Bubble timestamp ── */
+.bubble-time {
+  font-size: 10px;
+  color: rgba(255,255,255,0.25);
+  margin-top: 2px;
+  margin-bottom: 3px;
+  padding: 0 3px;
 }
 
 .log-message-bubble.log-thinking {
@@ -349,7 +435,7 @@ body {
 
 .log-meta-thinking .log-role { color: #7060c8; }
 
-.log-content {
+.bubble-text {
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -425,10 +511,38 @@ body {
 
 .settings-field input:focus { border-color: rgba(10,132,255,0.5); }
 
+.settings-field select {
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.88);
+  font-size: 13px;
+  padding: 9px 11px;
+  padding-right: 32px;
+  outline: none;
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='rgba(255,255,255,0.4)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  transition: border-color 0.15s;
+}
+.settings-field select:focus { border-color: rgba(10,132,255,0.5); }
+.settings-field select option { background: #2c2c2e; color: rgba(255,255,255,0.88); }
+
 .settings-hint {
   font-size: 11px;
   color: rgba(255,255,255,0.22);
   margin-top: 5px;
+}
+
+.add-agent-error {
+  font-size: 12px;
+  color: #ff453a;
+  margin-bottom: 14px;
 }
 
 .settings-actions {
@@ -492,9 +606,432 @@ body {
 }
 
 .search-highlight {
-  background: rgba(255,200,0,0.35);
+  background: rgba(255,200,0,0.3);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
 
+.search-highlight-active {
+  background: rgba(255,160,0,0.75);
+  color: #1a1a1a;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ── Floating search overlay ── */
+.search-overlay {
+  position: absolute;
+  top: 88px; /* traffic-zone(38) + toolbar(50) */
+  right: 16px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #2c2c2f;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 5px 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.55);
+}
+
+.search-overlay-icon {
+  color: rgba(255,255,255,0.35);
+  flex-shrink: 0;
+}
+
+.search-overlay-input {
+  width: 200px;
+  background: none;
+  border: none;
+  outline: none;
+  color: rgba(255,255,255,0.88);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.search-overlay-input::placeholder {
+  color: rgba(255,255,255,0.28);
+}
+
+.search-overlay-count {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-nav-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.5);
+  padding: 3px 5px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+.search-nav-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.88);
+}
+
+.search-nav-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* ── Metrics bar ── */
+.metrics-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 28px;
+  background: #1a1a1d;
+  border-top: 1px solid rgba(0,0,0,0.5);
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.metric-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.metric-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255,255,255,0.1);
+  margin: 0 14px;
+}
+
+.metric-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 28px;
+}
+
+.metric-track {
+  width: 60px;
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.metric-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+.metric-val {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  min-width: 80px;
+}
+
+/* ── Session tabs ── */
+.session-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(0,0,0,0.3);
+  padding: 4px 6px 0;
+  gap: 2px;
+}
+
+.session-tab {
+  flex: 1;
+  padding: 5px 4px;
+  background: none;
+  border: none;
+  border-radius: 5px 5px 0 0;
+  color: rgba(255,255,255,0.35);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+
+.session-tab:hover { color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.04); }
+.session-tab.active { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.07); }
+
+/* ── Memory view ── */
+.memory-view {
+  padding: 16px 20px;
+}
+
+.memory-filename {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.memory-text {
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: rgba(255,255,255,0.8);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Stats view ── */
+.stats-view {
+  padding: 20px;
+}
+
+.stats-heading {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.7);
+  margin-bottom: 16px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.stat-card {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.stat-card-cost {
+  grid-column: 1 / -1;
+  background: rgba(155,110,232,0.1);
+  border-color: rgba(155,110,232,0.2);
+}
+
+.stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.88);
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.stat-card-cost .stat-value {
+  color: #bf9eff;
+}
+
+.stats-sessions-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.25);
+  text-align: center;
+}
+
+/* ── Cron drawer ── */
+.cron-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 90;
+}
+
+.cron-drawer {
+  width: 380px;
+  height: 100%;
+  background: #252528;
+  border-left: 1px solid rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -12px 0 32px rgba(0,0,0,0.5);
+}
+
+.cron-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+}
+
+.cron-drawer-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.85);
+}
+
+.cron-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.cron-list::-webkit-scrollbar { width: 4px; }
+.cron-list::-webkit-scrollbar-track { background: transparent; }
+.cron-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+.cron-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  transition: background 0.1s;
+}
+
+.cron-item:hover { background: rgba(255,255,255,0.03); }
+
+.cron-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.cron-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.85);
+}
+
+.cron-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cron-status-ok { background: rgba(50,215,75,0.15); color: #32d74b; }
+.cron-status-error { background: rgba(255,69,58,0.15); color: #ff453a; }
+.cron-status-running { background: rgba(255,159,10,0.15); color: #ff9f0a; }
+.cron-status-unknown { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
+
+.cron-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.cron-agent {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.cron-schedule {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  background: rgba(255,255,255,0.06);
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.cron-item-time {
+  font-size: 10.5px;
+  color: rgba(255,255,255,0.25);
+  margin-top: 2px;
+}
+
+.cron-item-error {
+  font-size: 10.5px;
+  color: rgba(255,69,58,0.7);
+  margin-top: 3px;
+  font-style: italic;
+}
+
+/* ── Session list cron status badge ── */
+.session-cron-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-top: 3px;
+  display: inline-block;
+  font-weight: 500;
+}
+
+/* ── Cron detail view (main panel) ── */
+.cron-detail-view {
+  padding: 28px 32px;
+  max-width: 640px;
+}
+
+.cron-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.cron-detail-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.88);
+}
+
+.cron-detail-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cron-detail-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.cron-detail-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.cron-detail-value {
+  font-size: 13px;
+  color: rgba(255,255,255,0.75);
+}
+
+.cron-detail-mono {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+}
+
+.cron-detail-dim {
+  color: rgba(255,255,255,0.3);
+}
+
+.cron-detail-error-row .cron-detail-value {
+  color: #ff453a;
+}
+
+.cron-detail-error {
+  font-style: italic;
+}
