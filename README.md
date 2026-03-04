@@ -1,5 +1,7 @@
 # Agent Monitor
 
+🌍 **Languages**: [中文](README_zh.md)
+
 A macOS desktop app for monitoring AI agent conversations in real time. Supports both **OpenClaw** and **Claude Code** agent session logs, displayed in a Telegram-style chat interface.
 
 ![Agent Monitor UI](https://img.shields.io/badge/platform-macOS-lightgrey) ![Electron](https://img.shields.io/badge/electron-40-blue) ![React](https://img.shields.io/badge/react-19-61dafb)

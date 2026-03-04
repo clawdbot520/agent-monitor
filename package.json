@@ -1,20 +1,54 @@
 {
   "name": "agent-monitor",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.js",
+  "bin": {
+    "agent-monitor": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "server",
+    "dist",
+    "public",
+    "electron"
+  ],
   "build": {
     "appId": "com.openclaw.agent-monitor",
     "productName": "Agent Monitor",
-    "directories": { "output": "release" },
-    "files": ["electron/**/*", "package.json"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
     "extraResources": [
-      { "from": "dist", "to": "dist", "filter": ["**/*"] }
+      {
+        "from": "dist",
+        "to": "dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "souls",
+        "to": "souls",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": [{ "target": "dmg", "arch": ["arm64"] }]
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
     }
   },
   "scripts": {
@@ -25,9 +59,11 @@
     "build": "vite build",
     "build:app": "vite build && electron-builder",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.26.2",
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",

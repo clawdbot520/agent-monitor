@@ -1,5 +1,20 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, Component } from 'react'
 import './App.css'
+
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding: 20, color: '#ff453a', fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', background: '#1c1c1e', flex: 1, overflow: 'auto' }}>
+        <div style={{ marginBottom: 8, fontWeight: 'bold' }}>⚠ LanceDB Panel Error</div>
+        <div>{this.state.error?.message}</div>
+        <div style={{ marginTop: 8, opacity: 0.6, fontSize: 11 }}>{this.state.error?.stack}</div>
+      </div>
+    )
+    return this.props.children
+  }
+}
 
 const API = 'http://localhost:3001'
 
@@ -115,8 +130,12 @@ const TRANSLATIONS = {
     tabMemory: 'Memory',
     tabStats: 'Stats',
     tabCrons: 'Crons',
+    tabFiles: 'Files',
     noMemoryFiles: 'No memory files',
     selectMemoryFile: 'Select a file',
+    noConfigFiles: 'No config files',
+    selectConfigFile: 'Select a file',
+    lanceSearchPlaceholder: 'Search memories (FTS)…',
     noStats: 'No usage data',
     inputTokens: 'Input',
     outputTokens: 'Output',
@@ -186,8 +205,12 @@ const TRANSLATIONS = {
     tabMemory: 'Memory',
     tabStats: '統計',
     tabCrons: 'Crons',
+    tabFiles: '檔案',
     noMemoryFiles: '無 Memory 檔案',
     selectMemoryFile: '選擇檔案',
+    noConfigFiles: '無設定檔案',
+    selectConfigFile: '選擇檔案',
+    lanceSearchPlaceholder: 'FTS 搜尋記憶…',
     noStats: '無使用資料',
     inputTokens: '輸入',
     outputTokens: '輸出',
@@ -260,7 +283,7 @@ function App() {
 
   // New feature state
   const [systemMetrics, setSystemMetrics] = useState(null)
-  const [sessionTab, setSessionTab] = useState('sessions') // 'sessions' | 'memory' | 'crons'
+  const [sessionTab, setSessionTab] = useState('sessions') // 'sessions' | 'memory' | 'crons' | 'files'
   const [memoryFiles, setMemoryFiles] = useState([])
   const [selectedMemoryFile, setSelectedMemoryFile] = useState(null)
   const [memoryContent, setMemoryContent] = useState('')
@@ -268,7 +291,32 @@ function App() {
   const [selectedCron, setSelectedCron] = useState(null)
   const [crons, setCrons] = useState([])
 
+  // Agent config files state
+  const [agentFiles, setAgentFiles] = useState([])
+  const [selectedAgentFile, setSelectedAgentFile] = useState(null)
+  const [agentFileContent, setAgentFileContent] = useState('')
+  const [agentFileDraft, setAgentFileDraft] = useState('')
+  const [agentFileSaving, setAgentFileSaving] = useState(false)
+
+  // LanceDB panel state
+  const [appMode, setAppMode] = useState('sessions')   // 'sessions' | 'lancedb'
+  const [lanceScopes, setLanceScopes] = useState({})
+  const [lanceCategories, setLanceCategories] = useState({})
+  const [selectedScope, setSelectedScope] = useState('all')
+  const [lanceMemories, setLanceMemories] = useState([])
+  const [lanceSearch, setLanceSearch] = useState('')
+  const [lanceCategory, setLanceCategory] = useState('all')
+  const [lanceLoading, setLanceLoading] = useState(false)
+  const [showAddMemory, setShowAddMemory] = useState(false)
+  const [addMemoryForm, setAddMemoryForm] = useState({ text: '', scope: 'global', category: 'other', importance: '0.5' })
+  const [editingMemory, setEditingMemory] = useState(null)
+  const [lanceOffset, setLanceOffset] = useState(0)
+  const [lanceHasMore, setLanceHasMore] = useState(false)
+  const [expandedCards, setExpandedCards] = useState(new Set())
+  const [lanceSortBy, setLanceSortBy] = useState('timestamp')
+
   const searchInputRef = useRef(null)
+  const lanceSearchTimerRef = useRef(null)
   const logContainerRef = useRef(null)
   const savedScrollRef = useRef(0)
   const isRefreshRef = useRef(false)
@@ -348,12 +396,12 @@ function App() {
     } catch (e) { console.error(e) }
   }
 
-  const fetchSessions = async (agentId) => {
+  const fetchSessions = async (agentId, preserveSelected = false) => {
     try {
       const res = await fetch(`${API}/api/agents/${agentId}/sessions${buildQuery()}`)
       const data = await res.json()
       setSessions(data)
-      if (data.length > 0) setSelectedSession(data[0].id)
+      if (!preserveSelected && data.length > 0) setSelectedSession(data[0].id)
     } catch (e) { console.error(e) }
   }
 
@@ -401,11 +449,148 @@ function App() {
     } catch (e) {}
   }
 
+  const deleteSession = async (agentId, sessionId) => {
+    try {
+      const res = await fetch(`${API}/api/agents/${agentId}/sessions/${sessionId}${buildQuery()}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok || !data.ok) {
+        console.error('[deleteSession] server error:', data.error || res.status)
+        alert(`Delete failed: ${data.error || res.status}`)
+        return
+      }
+      setSessions(prev => prev.filter(s => s.id !== sessionId))
+      if (selectedSession === sessionId) {
+        setSelectedSession(null)
+        setLogs([])
+      }
+    } catch (e) {
+      console.error('[deleteSession] fetch error:', e)
+      alert(`Delete failed: ${e.message}`)
+    }
+  }
+
   const fetchCrons = async () => {
     try {
       const res = await fetch(`${API}/api/crons`)
       setCrons(await res.json())
     } catch (e) { setCrons([]) }
+  }
+
+  const fetchAgentFiles = async (agentId) => {
+    try {
+      const res = await fetch(`${API}/api/agents/${agentId}/config-files${buildQuery()}`)
+      setAgentFiles(await res.json())
+    } catch (e) { setAgentFiles([]) }
+  }
+
+  const fetchAgentFile = async (agentId, filename) => {
+    try {
+      const res = await fetch(`${API}/api/agents/${agentId}/config-files/${encodeURIComponent(filename)}${buildQuery()}`)
+      const data = await res.json()
+      setAgentFileContent(data.content || '')
+      setAgentFileDraft(data.content || '')
+    } catch (e) { setAgentFileContent(''); setAgentFileDraft('') }
+  }
+
+  const saveAgentFile = async () => {
+    if (!selectedAgent || !selectedAgentFile) return
+    setAgentFileSaving(true)
+    try {
+      await fetch(`${API}/api/agents/${selectedAgent}/config-files/${encodeURIComponent(selectedAgentFile)}${buildQuery()}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: agentFileDraft }),
+      })
+      setAgentFileContent(agentFileDraft)
+    } catch (e) {}
+    setAgentFileSaving(false)
+  }
+
+  const fetchLanceStats = async () => {
+    try {
+      const res = await fetch(`${API}/api/lancedb/stats`)
+      const data = await res.json()
+      setLanceScopes(data.scopeCounts || {})
+      setLanceCategories(data.categoryCounts || {})
+    } catch (e) {}
+  }
+
+  const LANCE_PAGE = 50
+  const fetchLanceMemories = async (reset = true, startOffset = 0) => {
+    setLanceLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: LANCE_PAGE, offset: startOffset })
+      if (selectedScope !== 'all') params.set('scope', selectedScope)
+      if (lanceCategory !== 'all') params.set('category', lanceCategory)
+      const res = await fetch(`${API}/api/lancedb/memories?${params}`)
+      const data = await res.json()
+      if (reset) {
+        setLanceMemories(data)
+      } else {
+        setLanceMemories(m => [...m, ...data])
+      }
+      setLanceOffset(startOffset + LANCE_PAGE)
+      setLanceHasMore(data.length === LANCE_PAGE)
+    } catch (e) { if (reset) setLanceMemories([]) }
+    setLanceLoading(false)
+  }
+
+  const deleteLanceMemory = async (id) => {
+    try {
+      await fetch(`${API}/api/lancedb/memories/${id}`, { method: 'DELETE' })
+      setLanceMemories(m => m.filter(x => x.id !== id))
+      fetchLanceStats()
+    } catch (e) {}
+  }
+
+  const updateLanceMemory = async (id, updates) => {
+    try {
+      await fetch(`${API}/api/lancedb/memories/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      })
+      setLanceMemories(m => m.map(x => x.id === id ? { ...x, ...updates } : x))
+      setEditingMemory(null)
+    } catch (e) {}
+  }
+
+  const searchLanceMemories = async (query) => {
+    setLanceLoading(true)
+    try {
+      const params = new URLSearchParams({ q: query })
+      if (selectedScope !== 'all') params.set('scope', selectedScope)
+      const res = await fetch(`${API}/api/lancedb/search?${params}`)
+      setLanceMemories(await res.json())
+      setLanceHasMore(false)
+      setLanceOffset(0)
+    } catch (e) { setLanceMemories([]) }
+    setLanceLoading(false)
+  }
+
+  const handleLanceSearch = (value) => {
+    setLanceSearch(value)
+    clearTimeout(lanceSearchTimerRef.current)
+    if (value.trim()) {
+      lanceSearchTimerRef.current = setTimeout(() => searchLanceMemories(value), 400)
+    } else {
+      lanceSearchTimerRef.current = setTimeout(() => fetchLanceMemories(), 200)
+    }
+  }
+
+  const addLanceMemory = async () => {
+    if (!addMemoryForm.text.trim()) return
+    try {
+      await fetch(`${API}/api/lancedb/memories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...addMemoryForm, importance: parseFloat(addMemoryForm.importance) || 0.5 }),
+      })
+      setShowAddMemory(false)
+      setAddMemoryForm({ text: '', scope: 'global', category: 'other', importance: '0.5' })
+      fetchLanceStats()
+      fetchLanceMemories()
+    } catch (e) {}
   }
 
   useLayoutEffect(() => {
@@ -432,6 +617,10 @@ function App() {
       setSelectedMemoryFile(null)
       setMemoryContent('')
       setSelectedCron(null)
+      setAgentFiles([])
+      setSelectedAgentFile(null)
+      setAgentFileContent('')
+      setAgentFileDraft('')
       fetchSessions(selectedAgent)
       if (!agentStatsMap[selectedAgent]) fetchAgentStats(selectedAgent)
     }
@@ -448,17 +637,34 @@ function App() {
     return () => clearInterval(id)
   }, [])
 
+  // Sessions polling — refresh every 30s when sessions tab is active
+  useEffect(() => {
+    if (!selectedAgent || sessionTab !== 'sessions') return
+    const id = setInterval(() => fetchSessions(selectedAgent, true), 30000)
+    return () => clearInterval(id)
+  }, [selectedAgent, sessionTab])
+
   // Fetch data when switching session tabs
   useEffect(() => {
     if (!selectedAgent) return
     if (sessionTab === 'memory') fetchMemoryFiles(selectedAgent)
     if (sessionTab === 'crons') fetchCrons()
+    if (sessionTab === 'files') fetchAgentFiles(selectedAgent)
   }, [sessionTab, selectedAgent])
 
   // Fetch memory file content when selected
   useEffect(() => {
     if (selectedAgent && selectedMemoryFile) fetchMemoryFile(selectedAgent, selectedMemoryFile)
   }, [selectedMemoryFile])
+
+  // Fetch config file content when selected
+  useEffect(() => {
+    if (selectedAgent && selectedAgentFile) fetchAgentFile(selectedAgent, selectedAgentFile)
+  }, [selectedAgentFile])
+
+  // LanceDB panel effects
+  useEffect(() => { if (appMode === 'lancedb') fetchLanceStats() }, [appMode])
+  useEffect(() => { if (appMode === 'lancedb') fetchLanceMemories() }, [appMode, selectedScope, lanceCategory])
 
   const handleAgentIdChange = (value) => {
     setAddAgentForm(f => ({
@@ -492,6 +698,7 @@ function App() {
     fetchAgents()
     if (selectedAgent) fetchSessions(selectedAgent)
     if (selectedAgent && selectedSession) fetchLogs(selectedAgent, selectedSession, true)
+    if (appMode === 'lancedb') { fetchLanceStats(); fetchLanceMemories() }
   }
 
   const openSettings = () => {
@@ -638,6 +845,16 @@ function App() {
               )}
             </button>
             <button
+              className={`icon-btn${appMode === 'lancedb' ? ' active' : ''}`}
+              onClick={() => setAppMode(m => m === 'lancedb' ? 'sessions' : 'lancedb')}
+              data-tooltip="LanceDB Memory"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.44-3.16Z"/>
+                <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.44-3.16Z"/>
+              </svg>
+            </button>
+            <button
               className={`icon-btn${showSearch ? ' active' : ''}`}
               onClick={() => setShowSearch(v => !v)}
               data-tooltip={lang.tipSearch}
@@ -714,6 +931,169 @@ function App() {
       )}
 
       {/* Content body */}
+      {appMode === 'lancedb' ? (
+        <ErrorBoundary><div className="lancedb-panel">
+          {/* Left: scope tree */}
+          <aside className="lancedb-scope-tree">
+            <div className="lancedb-scope-title">LanceDB Memory</div>
+            <div
+              className={`lancedb-scope-item${selectedScope === 'all' ? ' active' : ''}`}
+              onClick={() => setSelectedScope('all')}
+            >
+              <span>🌐 All</span>
+              <span className="lancedb-count">{Object.values(lanceScopes).reduce((a, b) => a + b, 0)}</span>
+            </div>
+            {lanceScopes['global'] !== undefined && (
+              <div className={`lancedb-scope-item${selectedScope === 'global' ? ' active' : ''}`}
+                onClick={() => setSelectedScope('global')}>
+                <span>🌐 global</span>
+                <span className="lancedb-count">{lanceScopes['global']}</span>
+              </div>
+            )}
+            {Object.entries(lanceScopes).filter(([s]) => s.startsWith('agent:')).map(([scope, count]) => (
+              <div key={scope} className={`lancedb-scope-item${selectedScope === scope ? ' active' : ''}`}
+                onClick={() => setSelectedScope(scope)}>
+                <span>📦 {scope.replace('agent:', '')}</span>
+                <span className="lancedb-count">{count}</span>
+              </div>
+            ))}
+          </aside>
+
+          {/* Right: search + cards */}
+          <div className="lancedb-main">
+            <div className="lancedb-search-bar">
+              <input
+                className="lancedb-search-input"
+                placeholder={lang.lanceSearchPlaceholder}
+                value={lanceSearch}
+                onChange={e => handleLanceSearch(e.target.value)}
+              />
+              <select className="lancedb-cat-select" value={lanceCategory}
+                onChange={e => setLanceCategory(e.target.value)}>
+                <option value="all">All</option>
+                <option value="fact">fact</option>
+                <option value="preference">preference</option>
+                <option value="decision">decision</option>
+                <option value="entity">entity</option>
+                <option value="other">other</option>
+              </select>
+              <button
+                className={`lancedb-sort-btn${lanceSortBy === 'importance' ? ' active' : ''}`}
+                onClick={() => setLanceSortBy(s => s === 'timestamp' ? 'importance' : 'timestamp')}
+                title={lanceSortBy === 'timestamp' ? '按時間排序（點切換）' : '按重要性排序（點切換）'}
+              >
+                {lanceSortBy === 'importance' ? '★' : '⏱'}
+              </button>
+              <button className="lancedb-add-btn" onClick={() => setShowAddMemory(true)} title="新增記憶">＋</button>
+            </div>
+            <div className="lancedb-cards">
+              {[...lanceMemories]
+                .sort((a, b) => lanceSortBy === 'importance'
+                  ? (b.importance ?? 0) - (a.importance ?? 0)
+                  : (b.timestamp ?? 0) - (a.timestamp ?? 0))
+                .map(m => {
+                  const isExpanded = expandedCards.has(m.id)
+                  const toggleExpand = () => setExpandedCards(prev => {
+                    const s = new Set(prev)
+                    s.has(m.id) ? s.delete(m.id) : s.add(m.id)
+                    return s
+                  })
+                  let meta = null
+                  try { meta = m.metadata ? (typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata) : null } catch (_) {}
+                  return (
+                  <div key={m.id} className="lancedb-card">
+                    <div className="lancedb-card-meta">
+                      <span className={`lancedb-badge cat-${editingMemory?.id === m.id ? editingMemory.category : m.category}`}>
+                        {editingMemory?.id === m.id ? editingMemory.category : m.category}
+                      </span>
+                      <span className="lancedb-badge scope-badge">{m.scope}</span>
+                      <div className="lancedb-imp-wrap">
+                        <div className="lancedb-importance-bar">
+                          <div className="lancedb-importance-fill" style={{
+                            width: `${((m.importance ?? 0) * 100).toFixed(0)}%`,
+                            background: (m.importance ?? 0) >= 0.8 ? '#4abe7a' : (m.importance ?? 0) >= 0.6 ? '#4ab3e8' : (m.importance ?? 0) >= 0.4 ? '#e8944a' : 'rgba(255,255,255,0.18)'
+                          }} />
+                        </div>
+                        <span className="lancedb-imp-val">{(m.importance ?? 0).toFixed(2)}</span>
+                      </div>
+                      <span className="lancedb-card-date">
+                        {m.timestamp ? new Date(m.timestamp).toLocaleDateString('zh-TW') : ''}
+                      </span>
+                      <button className="lancedb-icon-btn" title="編輯"
+                        onClick={() => setEditingMemory(editingMemory?.id === m.id ? null : { id: m.id, text: m.text, category: m.category })}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                      </button>
+                      <button className="lancedb-delete-btn" onClick={() => deleteLanceMemory(m.id)}>🗑</button>
+                    </div>
+                    {editingMemory?.id === m.id ? (
+                      <div className="lancedb-edit-mode">
+                        <textarea
+                          className="lancedb-edit-textarea"
+                          value={editingMemory.text}
+                          onChange={e => setEditingMemory(em => ({ ...em, text: e.target.value }))}
+                          rows={3}
+                          autoFocus
+                        />
+                        <div className="lancedb-edit-actions">
+                          <select value={editingMemory.category}
+                            onChange={e => setEditingMemory(em => ({ ...em, category: e.target.value }))}>
+                            <option value="fact">fact</option>
+                            <option value="preference">preference</option>
+                            <option value="decision">decision</option>
+                            <option value="entity">entity</option>
+                            <option value="other">other</option>
+                          </select>
+                          <button className="lancedb-save-btn"
+                            onClick={() => updateLanceMemory(m.id, { text: editingMemory.text, category: editingMemory.category })}>儲存</button>
+                          <button className="lancedb-cancel-btn" onClick={() => setEditingMemory(null)}>取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="lancedb-card-text">{highlightText(m.text, lanceSearch)}</div>
+                    )}
+                    <button className="lancedb-expand-btn" onClick={toggleExpand}>
+                      {isExpanded ? '▲ 收起' : '▼ 詳情'}
+                    </button>
+                    {isExpanded && (
+                      <div className="lancedb-card-detail">
+                        <div className="lancedb-detail-row">
+                          <span className="lancedb-detail-label">importance</span>
+                          <span className="lancedb-detail-val">{(m.importance ?? 0).toFixed(3)}</span>
+                        </div>
+                        <div className="lancedb-detail-row">
+                          <span className="lancedb-detail-label">id</span>
+                          <span className="lancedb-detail-val lancedb-detail-mono">{m.id}</span>
+                        </div>
+                        {meta && Object.keys(meta).length > 0 && (
+                          <div className="lancedb-detail-row">
+                            <span className="lancedb-detail-label">metadata</span>
+                            <pre className="lancedb-detail-pre">{JSON.stringify(meta, null, 2)}</pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  )
+                })}
+              {lanceMemories.length === 0 && !lanceLoading && (
+                <div className="empty-hint centered">無記憶</div>
+              )}
+              {lanceHasMore && (
+                <button
+                  className="lancedb-load-more"
+                  onClick={() => fetchLanceMemories(false, lanceOffset)}
+                  disabled={lanceLoading}
+                >
+                  {lanceLoading ? '載入中…' : '載入更多'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div></ErrorBoundary>
+      ) : (
       <div className="content-body">
         {/* Agents sidebar */}
         <aside className="sidebar" style={{ width: agentWidth }}>
@@ -761,6 +1141,10 @@ function App() {
                 className={`session-tab${sessionTab === 'crons' ? ' active' : ''}`}
                 onClick={() => setSessionTab('crons')}
               >{lang.tabCrons}</button>
+              <button
+                className={`session-tab${sessionTab === 'files' ? ' active' : ''}`}
+                onClick={() => setSessionTab('files')}
+              >{lang.tabFiles}</button>
             </div>
 
             {/* Sessions list */}
@@ -772,17 +1156,34 @@ function App() {
                   const { date, time } = formatSessionDate(session.lastModified)
                   const statsForAgent = agentStatsMap[selectedAgent]
                   const sessionStats = statsForAgent?.sessions?.find(s => s.sessionId === session.id)
+                  const ageMs = Date.now() - new Date(session.lastModified).getTime()
+                  const isActive = ageMs < 3 * 60 * 1000
+                  const isRecent = ageMs < 10 * 60 * 1000
                   return (
                     <div
                       key={session.id}
                       className={`session-item ${selectedSession === session.id ? 'active' : ''}`}
                       onClick={() => setSelectedSession(session.id)}
                     >
-                      <div className="session-date">{date} {time}</div>
+                      <div className="session-date">
+                        {isActive && <span className="session-active-dot active" title="Active" />}
+                        {!isActive && isRecent && <span className="session-active-dot recent" title="Recent" />}
+                        {date} {time}
+                      </div>
                       <div className="session-id">{session.id.substring(0, 8)}</div>
                       {sessionStats && (
                         <div className="session-tokens">↑{fmtTokens(sessionStats.input)} ↓{fmtTokens(sessionStats.output)}</div>
                       )}
+                      <button
+                        className="session-delete-btn"
+                        title="Delete session"
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (window.confirm(`Delete session ${session.id.substring(0, 8)}?`)) {
+                            deleteSession(selectedAgent, session.id)
+                          }
+                        }}
+                      >✕</button>
                     </div>
                   )
                 })}
@@ -830,6 +1231,24 @@ function App() {
               </div>
             )}
 
+            {/* Config files list */}
+            {sessionTab === 'files' && (
+              <div className="sessions-list">
+                {agentFiles.length === 0 ? (
+                  <div className="empty-hint">{lang.noConfigFiles}</div>
+                ) : agentFiles.map(file => (
+                  <div
+                    key={file.name}
+                    className={`session-item ${selectedAgentFile === file.name ? 'active' : ''}`}
+                    onClick={() => setSelectedAgentFile(file.name)}
+                  >
+                    <div className="session-date">{file.name}</div>
+                    <div className="session-time">{formatBytes(file.size)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
           </aside>
           <div className="resize-handle" onMouseDown={startResize('sessions')} />
           </>
@@ -849,6 +1268,30 @@ function App() {
                 </div>
               ) : (
                 <div className="empty-hint centered">{lang.selectMemoryFile}</div>
+              )
+
+            ) : sessionTab === 'files' ? (
+              !selectedAgentFile ? (
+                <div className="empty-hint centered">{lang.selectConfigFile}</div>
+              ) : (
+                <div className="config-file-view">
+                  <div className="config-file-header">
+                    <div className="config-file-name">{selectedAgentFile}</div>
+                    <button
+                      className={`config-file-save-btn${agentFileDraft !== agentFileContent ? ' dirty' : ''}`}
+                      onClick={saveAgentFile}
+                      disabled={agentFileSaving}
+                    >
+                      {agentFileSaving ? '儲存中…' : lang.save}
+                    </button>
+                  </div>
+                  <textarea
+                    className="config-file-editor"
+                    value={agentFileDraft}
+                    onChange={e => setAgentFileDraft(e.target.value)}
+                    spellCheck={false}
+                  />
+                </div>
               )
 
             ) : sessionTab === 'crons' ? (
@@ -1003,6 +1446,7 @@ function App() {
           </div>
         </main>
       </div>
+      )}
 
       {/* System metrics bar — always visible at bottom */}
       <div className="metrics-bar">
@@ -1040,6 +1484,53 @@ function App() {
           <span className="metric-label">{lang.loading}</span>
         )}
       </div>
+
+      {/* Add Memory modal */}
+      {showAddMemory && (
+        <div className="settings-overlay" onClick={() => setShowAddMemory(false)}>
+          <div className="settings-panel" onClick={e => e.stopPropagation()}>
+            <h3>新增記憶</h3>
+            <div className="settings-field">
+              <label>Text *</label>
+              <textarea
+                value={addMemoryForm.text}
+                onChange={e => setAddMemoryForm(f => ({ ...f, text: e.target.value }))}
+                rows={4}
+                placeholder="記憶內容..."
+                style={{ resize: 'vertical', fontFamily: 'inherit', width: '100%' }}
+                autoFocus
+              />
+            </div>
+            <div className="settings-field">
+              <label>Scope</label>
+              <input type="text" value={addMemoryForm.scope}
+                onChange={e => setAddMemoryForm(f => ({ ...f, scope: e.target.value }))}
+                placeholder="global 或 agent:xxx" />
+            </div>
+            <div className="settings-field">
+              <label>Category</label>
+              <select value={addMemoryForm.category}
+                onChange={e => setAddMemoryForm(f => ({ ...f, category: e.target.value }))}>
+                <option value="fact">fact</option>
+                <option value="preference">preference</option>
+                <option value="decision">decision</option>
+                <option value="entity">entity</option>
+                <option value="other">other</option>
+              </select>
+            </div>
+            <div className="settings-field">
+              <label>Importance (0–1)</label>
+              <input type="number" min="0" max="1" step="0.05"
+                value={addMemoryForm.importance}
+                onChange={e => setAddMemoryForm(f => ({ ...f, importance: e.target.value }))} />
+            </div>
+            <div className="settings-actions">
+              <button className="settings-cancel" onClick={() => setShowAddMemory(false)}>取消</button>
+              <button className="settings-save" onClick={addLanceMemory}>新增</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings modal */}
       {showSettings && (
