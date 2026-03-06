@@ -460,16 +460,16 @@ app.get('/api/crons', (req, res) => {
   }
 });
 
-// LanceDB helper (lazy init)
-let lanceTable = null
+// LanceDB helper — cache db connection, always open fresh table to see latest writes
+let lanceDb = null
 async function getLanceTable() {
-  if (lanceTable) return lanceTable
-  const lancedb = await import('@lancedb/lancedb')
-  const home = process.env.HOME || process.env.USERPROFILE
-  const dbPath = path.join(home, '.openclaw', 'memory', 'lancedb-pro')
-  const db = await lancedb.connect(dbPath)
-  lanceTable = await db.openTable('memories')
-  return lanceTable
+  if (!lanceDb) {
+    const lancedb = await import('@lancedb/lancedb')
+    const home = process.env.HOME || process.env.USERPROFILE
+    const dbPath = path.join(home, '.openclaw', 'memory', 'lancedb-pro')
+    lanceDb = await lancedb.connect(dbPath)
+  }
+  return lanceDb.openTable('memories')
 }
 
 // GET /api/lancedb/stats — scope & category counts
@@ -533,7 +533,6 @@ app.delete('/api/lancedb/memories/:id', async (req, res) => {
   try {
     const table = await getLanceTable()
     await table.delete(`id = '${req.params.id.replace(/'/g, "''")}'`)
-    lanceTable = null  // reset so stats refresh
     res.json({ ok: true })
   } catch (error) {
     res.status(500).json({ error: error.message })
@@ -554,7 +553,6 @@ app.post('/api/lancedb/memories', async (req, res) => {
       importance: Number(importance), timestamp: Date.now(),
       metadata: {}, vector: new Array(vecLen).fill(0),
     }])
-    lanceTable = null
     res.json({ ok: true, id })
   } catch (error) {
     res.status(500).json({ error: error.message })
@@ -576,7 +574,6 @@ app.patch('/api/lancedb/memories/:id', async (req, res) => {
     if (importance !== undefined) row.importance = Number(importance)
     await table.delete(`id = '${safeId}'`)
     await table.add([row])
-    lanceTable = null
     res.json({ ok: true })
   } catch (error) {
     res.status(500).json({ error: error.message })
