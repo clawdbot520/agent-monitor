@@ -1020,7 +1020,7 @@ function App() {
                         {m.timestamp ? new Date(m.timestamp).toLocaleDateString('zh-TW') : ''}
                       </span>
                       <button className="lancedb-icon-btn" title="編輯"
-                        onClick={() => setEditingMemory(editingMemory?.id === m.id ? null : { id: m.id, text: m.text, category: m.category })}>
+                        onClick={() => setEditingMemory(editingMemory?.id === m.id ? null : { id: m.id, text: m.text, category: m.category, scope: m.scope })}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -1046,8 +1046,29 @@ function App() {
                             <option value="entity">entity</option>
                             <option value="other">other</option>
                           </select>
+                          <select value={editingMemory.scope}
+                            onChange={e => setEditingMemory(em => ({ ...em, scope: e.target.value }))}>
+                            {['global', ...Object.keys(lanceScopes).filter(s => s !== 'global')].map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
                           <button className="lancedb-save-btn"
-                            onClick={() => updateLanceMemory(m.id, { text: editingMemory.text, category: editingMemory.category })}>儲存</button>
+                            onClick={async () => {
+                              if (editingMemory.scope !== m.scope) {
+                                // scope 改變 → delete + reinsert（重新計算向量）
+                                await fetch(`${API}/api/lancedb/memories`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ text: editingMemory.text, scope: editingMemory.scope, category: editingMemory.category, importance: m.importance ?? 0.5 })
+                                })
+                                await fetch(`${API}/api/lancedb/memories/${m.id}`, { method: 'DELETE' })
+                                fetchLanceStats()
+                                fetchLanceMemories()
+                                setEditingMemory(null)
+                              } else {
+                                updateLanceMemory(m.id, { text: editingMemory.text, category: editingMemory.category })
+                              }
+                            }}>儲存</button>
                           <button className="lancedb-cancel-btn" onClick={() => setEditingMemory(null)}>取消</button>
                         </div>
                       </div>
@@ -1170,7 +1191,7 @@ function App() {
                         {!isActive && isRecent && <span className="session-active-dot recent" title="Recent" />}
                         {date} {time}
                       </div>
-                      <div className="session-id">{session.id.substring(0, 8)}</div>
+                      <div className="session-id">{/^\d{4}-\d{2}-\d{2}$/.test(session.id) ? session.id : session.id.substring(0, 8)}</div>
                       {sessionStats && (
                         <div className="session-tokens">↑{fmtTokens(sessionStats.input)} ↓{fmtTokens(sessionStats.output)}</div>
                       )}
