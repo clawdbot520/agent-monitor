@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3001;
+const PORT = 3002;
 
 app.use(cors());
 app.use(express.json());
@@ -64,9 +64,10 @@ app.get('/api/agents/:agentId/sessions', (req, res) => {
 
     const sessions = fs.readdirSync(sessionsDir)
       .filter(f => f.endsWith('.jsonl'))
-      .map(f => {
-        const stat = fs.statSync(path.join(sessionsDir, f));
-        return { id: f.replace('.jsonl', ''), size: stat.size, lastModified: stat.mtime };
+      .flatMap(f => {
+        const fp = path.join(sessionsDir, f);
+        try { const s = fs.statSync(fp); return [{ id: f.replace('.jsonl', ''), size: s.size, lastModified: s.mtime }]; }
+        catch { return []; }
       })
       .filter(s => type === 'claude' ? s.size > 100 : s.size > 500)
       .sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
@@ -460,6 +461,18 @@ app.get('/api/crons', (req, res) => {
   }
 });
 
+// Jina AI embedding
+const JINA_API_KEY = process.env.JINA_API_KEY
+async function getEmbedding(text) {
+  const res = await fetch('https://api.jina.ai/v1/embeddings', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${JINA_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'jina-embeddings-v5-text-small', task: 'retrieval.passage', normalized: true, input: [text] })
+  })
+  const data = await res.json()
+  return data.data[0].embedding
+}
+
 // LanceDB helper — cache db connection, always open fresh table to see latest writes
 let lanceDb = null
 async function getLanceTable() {
@@ -539,19 +552,36 @@ app.delete('/api/lancedb/memories/:id', async (req, res) => {
   }
 })
 
-// POST /api/lancedb/memories — create new memory (zero vector)
+// GET /api/lancedb/vector-search?q=&scope=&limit= — semantic vector search for agents
+app.get('/api/lancedb/vector-search', async (req, res) => {
+  try {
+    const { q, scope, limit = 5 } = req.query
+    if (!q) return res.json([])
+    const [table, embedding] = await Promise.all([getLanceTable(), getEmbedding(q)])
+    let search = table.search(embedding).limit(Number(limit))
+    if (scope) search = search.where(`scope = '${scope.replace(/'/g, "''")}'`)
+    const results = await search.toArray()
+    res.json(results.map(r => ({
+      id: r.id, text: r.text, scope: r.scope ?? 'global',
+      category: r.category, importance: r.importance, timestamp: r.timestamp,
+      score: r._distance != null ? Math.round((1 - r._distance) * 100) / 100 : null
+    })))
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// POST /api/lancedb/memories — create new memory with real embedding
 app.post('/api/lancedb/memories', async (req, res) => {
   try {
     const { text, scope = 'global', category = 'other', importance = 0.5 } = req.body
     if (!text?.trim()) return res.status(400).json({ error: 'text required' })
-    const table = await getLanceTable()
-    const sample = await table.query().limit(1).toArray()
-    const vecLen = sample[0]?.vector?.length || 1536
+    const [table, vector] = await Promise.all([getLanceTable(), getEmbedding(text.trim())])
     const id = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     await table.add([{
       id, text: text.trim(), scope, category,
       importance: Number(importance), timestamp: Date.now(),
-      metadata: {}, vector: new Array(vecLen).fill(0),
+      metadata: {}, vector,
     }])
     res.json({ ok: true, id })
   } catch (error) {

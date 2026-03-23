@@ -73,9 +73,11 @@ function startServer() {
 
         const sessions = fs.readdirSync(sessionsDir)
           .filter(f => f.endsWith('.jsonl'))
-          .map(f => {
-            const stat = fs.statSync(path.join(sessionsDir, f))
-            return { id: f.replace('.jsonl', ''), size: stat.size, lastModified: stat.mtime }
+          .flatMap(f => {
+            const fp = path.join(sessionsDir, f)
+            // Skip broken symlinks (lstat exists but stat throws ENOENT)
+            try { return [{ id: f.replace('.jsonl', ''), ...(() => { const s = fs.statSync(fp); return { size: s.size, lastModified: s.mtime } })() }] }
+            catch { return [] }
           })
           .filter(s => type === 'claude' ? s.size > 100 : s.size > 500)
           .sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified))
@@ -444,6 +446,18 @@ function startServer() {
       }
     })
 
+    // Jina AI embedding
+    const JINA_API_KEY = process.env.JINA_API_KEY
+    async function getEmbedding(text) {
+      const res = await fetch('https://api.jina.ai/v1/embeddings', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${JINA_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'jina-embeddings-v5-text-small', task: 'retrieval.passage', normalized: true, input: [text] })
+      })
+      const data = await res.json()
+      return data.data[0].embedding
+    }
+
     // LanceDB helper — cache db connection, always open fresh table to see latest writes
     let lanceDb = null
     async function getLanceTable() {
@@ -523,19 +537,36 @@ function startServer() {
       }
     })
 
+    // GET /api/lancedb/vector-search?q=&scope=&limit= — semantic vector search for agents
+    server.get('/api/lancedb/vector-search', async (req, res) => {
+      try {
+        const { q, scope, limit = 5 } = req.query
+        if (!q) return res.json([])
+        const [table, embedding] = await Promise.all([getLanceTable(), getEmbedding(q)])
+        let search = table.search(embedding).limit(Number(limit))
+        if (scope) search = search.where(`scope = '${scope.replace(/'/g, "''")}'`)
+        const results = await search.toArray()
+        res.json(results.map(r => ({
+          id: r.id, text: r.text, scope: r.scope ?? 'global',
+          category: r.category, importance: r.importance, timestamp: r.timestamp,
+          score: r._distance != null ? Math.round((1 - r._distance) * 100) / 100 : null
+        })))
+      } catch (error) {
+        res.status(500).json({ error: error.message })
+      }
+    })
+
     // POST /api/lancedb/memories
     server.post('/api/lancedb/memories', async (req, res) => {
       try {
         const { text, scope = 'global', category = 'other', importance = 0.5 } = req.body
         if (!text?.trim()) return res.status(400).json({ error: 'text required' })
-        const table = await getLanceTable()
-        const sample = await table.query().limit(1).toArray()
-        const vecLen = sample[0]?.vector?.length || 1536
+        const [table, vector] = await Promise.all([getLanceTable(), getEmbedding(text.trim())])
         const id = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         await table.add([{
           id, text: text.trim(), scope, category,
           importance: Number(importance), timestamp: Date.now(),
-          metadata: {}, vector: new Array(vecLen).fill(0),
+          metadata: {}, vector,
         }])
         res.json({ ok: true, id })
       } catch (error) {
@@ -564,8 +595,254 @@ function startServer() {
       }
     })
 
-    server.listen(3001, () => {
-      console.log('Server running on http://localhost:3001')
+    // ── MCP over SSE ────────────────────────────────────────────────────────
+    // Implements MCP HTTP+SSE transport so any MCP client can connect via URL.
+    // Tools: remember, recall, list_facts, check_duplicate, forget
+
+    const mcpClients = new Map() // sessionId → res
+
+    // ── Kanban helpers ──────────────────────────────────────────────────────
+    const KANBAN_DIR = path.join(os.homedir(), 'repos', 'Obsidian Vault', 'Task Kanban')
+    const KANBAN_FILE = path.join(KANBAN_DIR, 'Kanban.md')
+    const TASK_DIR = path.join(KANBAN_DIR, 'task')
+    const JOB_SCRIPT = path.join(os.homedir(), '.openclaw', 'skills', 'task-kanban-mcp', 'scripts', 'job.sh')
+    const STATUS_MAP = {
+      backlog: '📥 Backlog', todo: '📅 Todo', running: '🚀 In Progress',
+      review: '👀 Review', done: '✅ Done', canceled: '❌ Canceled',
+      waiting: '💬 Waiting', blocked: '🚫 Blocked'
+    }
+
+    function kanbanGetBoard() {
+      if (!fs.existsSync(KANBAN_FILE)) return { error: 'Kanban file not found' }
+      const content = fs.readFileSync(KANBAN_FILE, 'utf-8')
+      const board = {}
+      for (const [status, title] of Object.entries(STATUS_MAP)) {
+        const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const m = content.match(new RegExp(`## ${escaped}[\\s\\S]*?(?=## |$)`))
+        board[status] = m ? [...m[0].matchAll(/- \[([ x])\] \[\[([^\]]+)\]\]/g)]
+          .map(t => ({ title: t[2], done: t[1] === 'x' })) : []
+      }
+      return board
+    }
+
+    function kanbanGetTask(taskId) {
+      const taskFile = path.join(TASK_DIR, `${taskId}.md`)
+      if (!fs.existsSync(taskFile)) return { error: `Task ${taskId} not found` }
+      const content = fs.readFileSync(taskFile, 'utf-8')
+      const task = {}
+      const yamlM = content.match(/^---\n([\s\S]*?)\n---/)
+      if (yamlM) {
+        for (const line of yamlM[1].split('\n')) {
+          const idx = line.indexOf(':')
+          if (idx > -1) task[line.slice(0, idx).trim()] = line.slice(idx + 1).trim()
+        }
+      }
+      const descM = content.match(/^---[\s\S]*?---\n([\s\S]*)/)
+      if (descM) task.description = descM[1].trim()
+      return task
+    }
+
+    function kanbanNextId() {
+      const files = fs.existsSync(TASK_DIR) ? fs.readdirSync(TASK_DIR) : []
+      const nums = files.map(f => { const m = f.match(/^TASK-(\d+)/); return m ? parseInt(m[1]) : 0 })
+      return `TASK-${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`
+    }
+
+    function kanbanAddToBoard(taskId, status) {
+      const target = STATUS_MAP[status]
+      if (!target) return { error: `Invalid status: ${status}` }
+      let content = fs.readFileSync(KANBAN_FILE, 'utf-8')
+      if (content.includes(`[[${taskId}]]`)) return { ok: true, message: 'already on board' }
+      const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      content = content.replace(new RegExp(`(## ${escaped})`), `$1\n\n- [ ] [[${taskId}]]`)
+      fs.writeFileSync(KANBAN_FILE, content)
+      return { ok: true }
+    }
+
+    function kanbanCreateTask(title, assignee, description = '', taskId = null, step1, step2, step3, step4) {
+      if (!taskId) taskId = kanbanNextId()
+      const filename = `${taskId}-${title}`
+      const taskFile = path.join(TASK_DIR, `${filename}.md`)
+      if (fs.existsSync(taskFile)) return { error: `${filename} already exists` }
+      const s1 = step1 || assignee
+      const hasSteps = !!(step2 || step3 || step4)
+      const steps = [s1, step2, step3, step4].filter(Boolean)
+        .map((s, i) => `step${i + 1}: ${s}`).join('\n')
+      const content = `---\nassignee: ${assignee}\n${hasSteps ? 'current_step: 1\n' : ''}${steps}\n---\n\n${description}\n\n## 💬 討論與備註\n\n`
+      fs.writeFileSync(taskFile, content)
+      kanbanAddToBoard(filename, 'todo')
+      return { ok: true, task_id: filename }
+    }
+
+    function kanbanMoveCard(taskId, toStatus) {
+      if (!STATUS_MAP[toStatus]) return { error: `Invalid status: ${toStatus}` }
+      let content = fs.readFileSync(KANBAN_FILE, 'utf-8')
+      content = content.replace(new RegExp(`^- \\[.\\] \\[\\[${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\]\\n?`, 'gm'), '')
+      const target = STATUS_MAP[toStatus]
+      const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      content = content.replace(new RegExp(`(## ${escaped})`), `$1\n\n- [ ] [[${taskId}]]`)
+      fs.writeFileSync(KANBAN_FILE, content)
+      return { ok: true, task_id: taskId, to_status: toStatus }
+    }
+
+    function kanbanTriggerJob() {
+      if (!fs.existsSync(JOB_SCRIPT)) return { error: 'job.sh not found' }
+      try {
+        const result = execSync(`bash "${JOB_SCRIPT}"`, { timeout: 300000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
+        return { ok: true, stdout: result.slice(-2000) }
+      } catch (e) {
+        return { ok: false, returncode: e.status, stdout: (e.stdout || '').slice(-2000), stderr: (e.stderr || '').slice(-500) }
+      }
+    }
+    // ── End Kanban helpers ───────────────────────────────────────────────────
+
+    const MCP_TOOLS = [
+      { name: 'remember', description: '寫入記憶到 LanceDB（自動生成 embedding）',
+        inputSchema: { type: 'object', required: ['content'],
+          properties: { content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } },
+            agent: { type: 'string' }, importance: { type: 'number' } } } },
+      { name: 'recall', description: '向量語意搜尋記憶',
+        inputSchema: { type: 'object', required: ['query'],
+          properties: { query: { type: 'string' }, top_k: { type: 'number' }, agent_filter: { type: 'string' } } } },
+      { name: 'list_facts', description: '條件過濾記憶列表',
+        inputSchema: { type: 'object', properties: { agent: { type: 'string' }, tag: { type: 'string' } } } },
+      { name: 'check_duplicate', description: '檢查重複記憶',
+        inputSchema: { type: 'object', required: ['content'],
+          properties: { content: { type: 'string' }, threshold: { type: 'number' } } } },
+      { name: 'forget', description: '刪除記憶',
+        inputSchema: { type: 'object', required: ['memory_id'],
+          properties: { memory_id: { type: 'string' } } } },
+      // Kanban tools
+      { name: 'get_board', description: '取得看板狀態', inputSchema: { type: 'object', properties: {} } },
+      { name: 'get_task', description: '取得任務詳情',
+        inputSchema: { type: 'object', required: ['task_id'], properties: { task_id: { type: 'string' } } } },
+      { name: 'create_task', description: '建立新任務',
+        inputSchema: { type: 'object', required: ['title', 'assignee'],
+          properties: { title: { type: 'string' }, assignee: { type: 'string' },
+            description: { type: 'string' }, task_id: { type: 'string' },
+            step1: { type: 'string' }, step2: { type: 'string' }, step3: { type: 'string' }, step4: { type: 'string' } } } },
+      { name: 'move_card', description: '搬移卡片',
+        inputSchema: { type: 'object', required: ['task_id', 'to_status'],
+          properties: { task_id: { type: 'string' }, to_status: { type: 'string', enum: Object.keys(STATUS_MAP) } } } },
+      { name: 'trigger_job', description: '觸發任務執行', inputSchema: { type: 'object', properties: {} } },
+      { name: 'list_tasks_by_status', description: '列出特定狀態任務',
+        inputSchema: { type: 'object', required: ['status'],
+          properties: { status: { type: 'string', enum: Object.keys(STATUS_MAP) } } } },
+    ]
+
+    async function mcpCallTool(name, args) {
+      const table = await getLanceTable()
+      if (name === 'remember') {
+        const { content, tags = [], agent = 'unknown', importance = 0.7 } = args
+        const vector = await getEmbedding(content)
+        const id = crypto.randomUUID().slice(0, 8)
+        await table.add([{ id, text: content, vector, scope: agent,
+          category: tags.join(','), importance, timestamp: Date.now(),
+          metadata: JSON.stringify({ created: new Date().toISOString() }) }])
+        return { ok: true, memory_id: id }
+      }
+      if (name === 'recall') {
+        const { query, top_k = 5, agent_filter } = args
+        const embedding = await getEmbedding(query)
+        let search = table.search(embedding).limit(top_k * 3)
+        if (agent_filter) search = search.where(`scope = '${agent_filter.replace(/'/g, "''")}'`)
+        const rows = await search.toArray()
+        return rows.slice(0, top_k).map(r => ({
+          memory_id: r.id, content: r.text, tags: r.category ? r.category.split(',') : [],
+          agent: r.scope, score: r._distance != null ? Math.round((1 - r._distance) * 100) / 100 : null
+        }))
+      }
+      if (name === 'list_facts') {
+        const { agent, tag } = args
+        let rows = await table.query().toArray()
+        if (agent) rows = rows.filter(r => r.scope === agent)
+        if (tag) rows = rows.filter(r => r.category && r.category.split(',').includes(tag))
+        return rows.map(r => ({ memory_id: r.id, content: r.text,
+          tags: r.category ? r.category.split(',') : [], agent: r.scope, importance: r.importance }))
+      }
+      if (name === 'check_duplicate') {
+        const { content, threshold = 0.90 } = args
+        const embedding = await getEmbedding(content)
+        const rows = await table.search(embedding).limit(5).toArray()
+        const similar = rows
+          .map(r => ({ memory_id: r.id, content: r.text.slice(0, 100),
+            score: r._distance != null ? Math.round((1 - r._distance) * 100) / 100 : 0 }))
+          .filter(r => r.score >= threshold)
+        return { is_duplicate: similar.length > 0, similar }
+      }
+      if (name === 'forget') {
+        const safeId = args.memory_id.replace(/'/g, "''")
+        await table.delete(`id = '${safeId}'`)
+        return { ok: true }
+      }
+      // Kanban tools
+      if (name === 'get_board') return kanbanGetBoard()
+      if (name === 'get_task') return kanbanGetTask(args.task_id)
+      if (name === 'create_task') return kanbanCreateTask(args.title, args.assignee, args.description, args.task_id, args.step1, args.step2, args.step3, args.step4)
+      if (name === 'move_card') return kanbanMoveCard(args.task_id, args.to_status)
+      if (name === 'trigger_job') return kanbanTriggerJob()
+      if (name === 'list_tasks_by_status') return kanbanGetBoard()[args.status] || []
+      throw new Error(`Unknown tool: ${name}`)
+    }
+
+    // GET /mcp/sse — establish SSE connection
+    server.get('/mcp/sse', (req, res) => {
+      const sessionId = crypto.randomUUID()
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Connection', 'keep-alive')
+      mcpClients.set(sessionId, res)
+      // Send endpoint event per MCP spec
+      res.write(`event: endpoint\ndata: ${JSON.stringify({ uri: `/mcp/message?sessionId=${sessionId}` })}\n\n`)
+      req.on('close', () => mcpClients.delete(sessionId))
+    })
+
+    // POST /mcp/message — receive JSON-RPC from client
+    server.post('/mcp/message', async (req, res) => {
+      const { sessionId } = req.query
+      const sseRes = mcpClients.get(sessionId)
+      const request = req.body
+      const id = request.id
+      let response
+
+      try {
+        if (request.method === 'initialize') {
+          response = { result: { protocolVersion: '2024-11-05', capabilities: { tools: {} },
+            serverInfo: { name: 'agent-monitor-mcp', version: '2.0.0' } } }
+        } else if (request.method === 'notifications/initialized') {
+          res.status(202).end(); return
+        } else if (request.method === 'tools/list') {
+          response = { result: { tools: MCP_TOOLS } }
+        } else if (request.method === 'tools/call') {
+          const toolName = request.params.name
+          const toolArgs = request.params.arguments || {}
+          const TOOL_TIMEOUT_MS = 30000
+          const result = await Promise.race([
+            mcpCallTool(toolName, toolArgs),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool call timeout (${TOOL_TIMEOUT_MS / 1000}s): ${toolName}`)), TOOL_TIMEOUT_MS))
+          ])
+          response = { result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } }
+        } else {
+          response = { error: { code: -32601, message: 'Method not found' } }
+        }
+      } catch (e) {
+        response = { error: { code: -32603, message: e.message } }
+      }
+
+      response.id = id
+      response.jsonrpc = '2.0'
+
+      if (sseRes) {
+        sseRes.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`)
+        res.status(202).end()
+      } else {
+        res.json(response)
+      }
+    })
+    // ── End MCP ─────────────────────────────────────────────────────────────
+
+    server.listen(3002, () => {
+      console.log('Server running on http://localhost:3002')
       resolve()
     })
   })
@@ -586,8 +863,15 @@ function createWindow() {
     }
   })
 
-  const url = isDev ? 'http://localhost:5173' : 'http://localhost:3001'
+  const url = isDev ? 'http://localhost:5173' : 'http://localhost:3002'
   tryLoadURL(win, url)
+
+  // Cmd+Option+I (macOS) / F12 opens DevTools
+  win.webContents.on('before-input-event', (event, input) => {
+    if ((input.meta && input.alt && input.key === 'i') || input.key === 'F12') {
+      win.webContents.toggleDevTools()
+    }
+  })
 }
 
 function tryLoadURL(win, url, retries = 0) {

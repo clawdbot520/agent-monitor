@@ -7,7 +7,7 @@ class ErrorBoundary extends Component {
   render() {
     if (this.state.error) return (
       <div style={{ padding: 20, color: '#ff453a', fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', background: '#1c1c1e', flex: 1, overflow: 'auto' }}>
-        <div style={{ marginBottom: 8, fontWeight: 'bold' }}>⚠ LanceDB Panel Error</div>
+        <div style={{ marginBottom: 8, fontWeight: 'bold' }}>⚠ Render Error</div>
         <div>{this.state.error?.message}</div>
         <div style={{ marginTop: 8, opacity: 0.6, fontSize: 11 }}>{this.state.error?.stack}</div>
       </div>
@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
   }
 }
 
-const API = 'http://localhost:3001'
+const API = 'http://localhost:3002'
 
 const AVATAR_COLORS = ['#e8634a', '#e8944a', '#4abe7a', '#4ab3e8', '#5a8de8', '#9b6ee8']
 const getAvatarColor = (id) => {
@@ -400,8 +400,9 @@ function App() {
     try {
       const res = await fetch(`${API}/api/agents/${agentId}/sessions${buildQuery()}`)
       const data = await res.json()
-      setSessions(data)
-      if (!preserveSelected && data.length > 0) setSelectedSession(data[0].id)
+      const sessions = Array.isArray(data) ? data : []
+      setSessions(sessions)
+      if (!preserveSelected && sessions.length > 0) setSelectedSession(sessions[0].id)
     } catch (e) { console.error(e) }
   }
 
@@ -1115,7 +1116,7 @@ function App() {
           </div>
         </div></ErrorBoundary>
       ) : (
-      <div className="content-body">
+      <ErrorBoundary><div className="content-body">
         {/* Agents sidebar */}
         <aside className="sidebar" style={{ width: agentWidth }}>
           <div className="agent-list">
@@ -1466,7 +1467,7 @@ function App() {
             )}
           </div>
         </main>
-      </div>
+      </div></ErrorBoundary>
       )}
 
       {/* System metrics bar — always visible at bottom */}
