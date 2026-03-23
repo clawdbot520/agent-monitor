@@ -461,13 +461,14 @@ app.get('/api/crons', (req, res) => {
   }
 });
 
-// Jina AI embedding
-const JINA_API_KEY = process.env.JINA_API_KEY
+// Local BGE-M3 embedding server
+const EMBEDDING_URL = process.env.EMBEDDING_URL || 'http://127.0.0.1:8010'
+const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || 'local'
 async function getEmbedding(text) {
-  const res = await fetch('https://api.jina.ai/v1/embeddings', {
+  const res = await fetch(`${EMBEDDING_URL}/v1/embeddings`, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${JINA_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'jina-embeddings-v5-text-small', task: 'retrieval.passage', normalized: true, input: [text] })
+    headers: { 'Authorization': `Bearer ${EMBEDDING_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input: [text] })
   })
   const data = await res.json()
   return data.data[0].embedding
