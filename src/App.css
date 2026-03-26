@@ -1444,3 +1444,40 @@ body {
 .chat-send-btn:not(:disabled):hover {
   opacity: 0.85;
 }
+
+/* ── Chat target selector ── */
+.chat-target-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px 0;
+}
+
+.chat-target-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  margin-right: 4px;
+}
+
+.chat-target-btn {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chat-target-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.8);
+}
+
+.chat-target-btn.active {
+  background: #0a84ff;
+  border-color: #0a84ff;
+  color: #fff;
+}

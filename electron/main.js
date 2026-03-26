@@ -634,7 +634,7 @@ function startServer() {
       messages.push(msg)
       writeChatHistory(messages)
 
-      const mentionMatch = text.match(/@(小歐|小安|小可)/)
+      const mentionMatch = text.match(/@(小歐|小安|小可|小扣)/)
       if (mentionMatch) {
         const agent = mentionMatch[1]
         const replyInstr = `\n\n完成後請 curl 回覆 Agent Monitor：\ncurl -s -X POST http://localhost:3002/api/chat/receive -H 'Content-Type: application/json' -d '{"from":"${agent}","text":"YOUR_REPLY","replyToId":"${id}"}'`
@@ -649,8 +649,16 @@ function startServer() {
             if (err) console.error('[chat] 小安 route error:', err.message)
           })
         } else if (agent === '小可') {
-          execFile('curl', ['-s', '-X', 'POST', 'http://127.0.0.1:8787/upload', '-F', `id=${id}`, '-F', `text=${fullMsg}`, '-F', 'from=user'], { timeout: 10000 }, (err) => {
+          execFile('curl', ['-s', '-X', 'POST', 'http://127.0.0.1:8787/upload',
+            '--form-string', `id=${id}`,
+            '--form-string', `text=${fullMsg}`,
+            '--form-string', 'from=user'
+          ], { timeout: 10000 }, (err) => {
             if (err) console.error('[chat] 小可 route error:', err.message)
+          })
+        } else if (agent === '小扣') {
+          execFile('acpx', ['--approve-all', 'codex', 'prompt', fullMsg], { timeout: 60000, cwd: os.homedir() }, (err) => {
+            if (err) console.error('[chat] 小扣 route error:', err.message)
           })
         }
       }

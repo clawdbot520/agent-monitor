@@ -151,7 +151,7 @@ const TRANSLATIONS = {
     cronDuration: 'Duration',
     cronError: 'Last error',
     tipChat: 'Agent Chat',
-    chatPlaceholder: '@小歐 / @小安 / @小可 ...',
+    chatPlaceholder: '@小歐 / @小安 / @小可 … (Enter 送出)',
     chatSend: 'Send',
     chatEmpty: 'No messages yet. Type @小歐, @小安, or @小可 to start.',
   },
@@ -230,7 +230,7 @@ const TRANSLATIONS = {
     cronDuration: '執行時長',
     cronError: '最後錯誤',
     tipChat: 'Agent 聊天',
-    chatPlaceholder: '@小歐 / @小安 / @小可 ...',
+    chatPlaceholder: '@小歐 / @小安 / @小可 … (Enter 送出)',
     chatSend: '送出',
     chatEmpty: '尚無訊息。輸入 @小歐、@小安 或 @小可 開始聊天。',
   },
@@ -328,8 +328,10 @@ function App() {
   const [chatInput, setChatInput] = useState('')
   const [chatSending, setChatSending] = useState(false)
   const [showMentionMenu, setShowMentionMenu] = useState(false)
+  const [chatTargets, setChatTargets] = useState(new Set())
   const chatInputRef = useRef(null)
   const chatBottomRef = useRef(null)
+  const chatComposingRef = useRef(false)
 
   const searchInputRef = useRef(null)
   const lanceSearchTimerRef = useRef(null)
@@ -531,15 +533,26 @@ function App() {
   }
 
   const sendChatMessage = async () => {
-    const text = chatInput.trim()
-    if (!text || chatSending) return
+    const raw = chatInput.trim()
+    if (!raw || chatSending) return
     setChatSending(true)
     try {
-      await fetch(`${API}/api/chat/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, from: 'user' }),
-      })
+      if (chatTargets.size > 0 && !raw.startsWith('@')) {
+        // Send to each selected agent separately
+        for (const target of chatTargets) {
+          await fetch(`${API}/api/chat/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: `@${target} ${raw}`, from: 'user' }),
+          })
+        }
+      } else {
+        await fetch(`${API}/api/chat/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: raw, from: 'user' }),
+        })
+      }
       setChatInput('')
       setShowMentionMenu(false)
       fetchChatMessages()
@@ -1023,10 +1036,24 @@ function App() {
             })}
             <div ref={chatBottomRef} />
           </div>
+          <div className="chat-target-bar">
+            <span className="chat-target-label">To:</span>
+            {['小歐', '小安', '小可', '小扣'].map(name => (
+              <button
+                key={name}
+                className={`chat-target-btn${chatTargets.has(name) ? ' active' : ''}`}
+                onClick={() => setChatTargets(prev => {
+                  const next = new Set(prev)
+                  next.has(name) ? next.delete(name) : next.add(name)
+                  return next
+                })}
+              >{name}</button>
+            ))}
+          </div>
           <div className="chat-input-bar">
             {showMentionMenu && (
               <div className="chat-mention-menu">
-                {['小歐', '小安', '小可'].map(name => (
+                {['小歐', '小安', '小可', '小扣'].map(name => (
                   <button key={name} className="chat-mention-item" onMouseDown={e => {
                     e.preventDefault()
                     const idx = chatInput.lastIndexOf('@')
@@ -1041,16 +1068,20 @@ function App() {
               ref={chatInputRef}
               className="chat-input"
               value={chatInput}
-              placeholder={lang.chatPlaceholder}
+              placeholder={chatTargets.size > 0 ? `傳訊息給 ${[...chatTargets].join('、')}…` : lang.chatPlaceholder}
               rows={2}
               onChange={e => {
                 setChatInput(e.target.value)
                 const val = e.target.value
-                const lastAt = val.lastIndexOf('@')
-                setShowMentionMenu(lastAt !== -1 && lastAt === val.length - 1)
+                // Show menu when text ends with @ or @partial (not yet a complete mention)
+                const mentionInProgress = /@(小歐|小安|小可|小扣)?$/.test(val) && !/@(小歐|小安|小可|小扣)\s/.test(val.slice(val.lastIndexOf('@')))
+                setShowMentionMenu(mentionInProgress)
               }}
+              onCompositionStart={() => { chatComposingRef.current = true }}
+              onCompositionEnd={() => { setTimeout(() => { chatComposingRef.current = false }, 0) }}
               onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if (chatComposingRef.current) return
+                if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
                   e.preventDefault()
                   sendChatMessage()
                 }
