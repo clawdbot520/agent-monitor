@@ -1481,3 +1481,39 @@ body {
   border-color: #0a84ff;
   color: #fff;
 }
+
+/* ── Chat context menu ── */
+.chat-context-menu {
+  position: fixed;
+  background: #2c2c2e;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  min-width: 120px;
+}
+
+.chat-context-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  padding: 4px 10px 2px;
+}
+
+.chat-context-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.88);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 10px;
+  text-align: left;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.chat-context-item:hover {
+  background: rgba(255,255,255,0.08);
+}

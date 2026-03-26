@@ -329,6 +329,7 @@ function App() {
   const [chatSending, setChatSending] = useState(false)
   const [showMentionMenu, setShowMentionMenu] = useState(false)
   const [chatTargets, setChatTargets] = useState(new Set())
+  const [contextMenu, setContextMenu] = useState(null) // { x, y, msg }
   const chatInputRef = useRef(null)
   const chatBottomRef = useRef(null)
   const chatComposingRef = useRef(false)
@@ -523,6 +524,19 @@ function App() {
       setAgentFileContent(agentFileDraft)
     } catch (e) {}
     setAgentFileSaving(false)
+  }
+
+  const forwardMessage = (msg, target) => {
+    setContextMenu(null)
+    // Pre-fill input with forwarded content, let user add text before sending
+    setChatTargets(new Set([target]))
+    setChatInput(`[轉發自 ${msg.from}]\n${msg.text}\n\n`)
+    setTimeout(() => {
+      chatInputRef.current?.focus()
+      // Move cursor to end
+      const el = chatInputRef.current
+      if (el) el.selectionStart = el.selectionEnd = el.value.length
+    }, 50)
   }
 
   const fetchChatMessages = async () => {
@@ -1008,7 +1022,19 @@ function App() {
 
       {/* Content body */}
       {appMode === 'chat' ? (
-        <ErrorBoundary><div className="chat-panel">
+        <ErrorBoundary><div className="chat-panel" onClick={() => setContextMenu(null)}>
+          {contextMenu && (
+            <div className="chat-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}
+              onClick={e => e.stopPropagation()}>
+              <div className="chat-context-label">轉發給</div>
+              {['小歐', '小安', '小可', '小扣'].map(name => (
+                <button key={name} className="chat-context-item"
+                  onClick={() => forwardMessage(contextMenu.msg, name)}>
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="chat-messages">
             {chatMessages.length === 0 ? (
               <div className="empty-hint centered">{lang.chatEmpty}</div>
@@ -1016,7 +1042,8 @@ function App() {
               const isUser = msg.from === 'user'
               const agentColor = getAvatarColor(msg.from)
               return (
-                <div key={msg.id} className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-agent'}`}>
+                <div key={msg.id} className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-agent'}`}
+                  onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, msg }) }}>
                   {!isUser && (
                     <div className="chat-avatar" style={{ background: agentColor }}>
                       {msg.from.charAt(0)}
