@@ -150,6 +150,10 @@ const TRANSLATIONS = {
     cronNext: 'Next run',
     cronDuration: 'Duration',
     cronError: 'Last error',
+    tipChat: 'Agent Chat',
+    chatPlaceholder: '@小歐 / @小安 / @小可 ...',
+    chatSend: 'Send',
+    chatEmpty: 'No messages yet. Type @小歐, @小安, or @小可 to start.',
   },
   'zh-TW': {
     agents: '代理',
@@ -225,6 +229,10 @@ const TRANSLATIONS = {
     cronNext: '下次執行',
     cronDuration: '執行時長',
     cronError: '最後錯誤',
+    tipChat: 'Agent 聊天',
+    chatPlaceholder: '@小歐 / @小安 / @小可 ...',
+    chatSend: '送出',
+    chatEmpty: '尚無訊息。輸入 @小歐、@小安 或 @小可 開始聊天。',
   },
 }
 
@@ -314,6 +322,14 @@ function App() {
   const [lanceHasMore, setLanceHasMore] = useState(false)
   const [expandedCards, setExpandedCards] = useState(new Set())
   const [lanceSortBy, setLanceSortBy] = useState('timestamp')
+
+  // Chat state
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatSending, setChatSending] = useState(false)
+  const [showMentionMenu, setShowMentionMenu] = useState(false)
+  const chatInputRef = useRef(null)
+  const chatBottomRef = useRef(null)
 
   const searchInputRef = useRef(null)
   const lanceSearchTimerRef = useRef(null)
@@ -507,6 +523,30 @@ function App() {
     setAgentFileSaving(false)
   }
 
+  const fetchChatMessages = async () => {
+    try {
+      const res = await fetch(`${API}/api/chat/messages`)
+      setChatMessages(await res.json())
+    } catch (e) {}
+  }
+
+  const sendChatMessage = async () => {
+    const text = chatInput.trim()
+    if (!text || chatSending) return
+    setChatSending(true)
+    try {
+      await fetch(`${API}/api/chat/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, from: 'user' }),
+      })
+      setChatInput('')
+      setShowMentionMenu(false)
+      fetchChatMessages()
+    } catch (e) {}
+    setChatSending(false)
+  }
+
   const fetchLanceStats = async () => {
     try {
       const res = await fetch(`${API}/api/lancedb/stats`)
@@ -666,6 +706,19 @@ function App() {
   // LanceDB panel effects
   useEffect(() => { if (appMode === 'lancedb') fetchLanceStats() }, [appMode])
   useEffect(() => { if (appMode === 'lancedb') fetchLanceMemories() }, [appMode, selectedScope, lanceCategory])
+
+  // Chat polling — fetch every 3s when in chat mode
+  useEffect(() => {
+    if (appMode !== 'chat') return
+    fetchChatMessages()
+    const id = setInterval(fetchChatMessages, 3000)
+    return () => clearInterval(id)
+  }, [appMode])
+
+  // Auto-scroll chat to bottom on new messages
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
 
   const handleAgentIdChange = (value) => {
     setAddAgentForm(f => ({
@@ -846,6 +899,15 @@ function App() {
               )}
             </button>
             <button
+              className={`icon-btn${appMode === 'chat' ? ' active' : ''}`}
+              onClick={() => setAppMode(m => m === 'chat' ? 'sessions' : 'chat')}
+              data-tooltip={lang.tipChat}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
+            <button
               className={`icon-btn${appMode === 'lancedb' ? ' active' : ''}`}
               onClick={() => setAppMode(m => m === 'lancedb' ? 'sessions' : 'lancedb')}
               data-tooltip="LanceDB Memory"
@@ -932,7 +994,81 @@ function App() {
       )}
 
       {/* Content body */}
-      {appMode === 'lancedb' ? (
+      {appMode === 'chat' ? (
+        <ErrorBoundary><div className="chat-panel">
+          <div className="chat-messages">
+            {chatMessages.length === 0 ? (
+              <div className="empty-hint centered">{lang.chatEmpty}</div>
+            ) : chatMessages.map(msg => {
+              const isUser = msg.from === 'user'
+              const agentColor = getAvatarColor(msg.from)
+              return (
+                <div key={msg.id} className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-agent'}`}>
+                  {!isUser && (
+                    <div className="chat-avatar" style={{ background: agentColor }}>
+                      {msg.from.charAt(0)}
+                    </div>
+                  )}
+                  <div className="chat-bubble-wrap">
+                    {!isUser && <div className="chat-sender">{msg.from}</div>}
+                    <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-agent'}`}>
+                      {msg.text}
+                    </div>
+                    <div className="chat-time">
+                      {msg.ts ? new Date(msg.ts).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+            <div ref={chatBottomRef} />
+          </div>
+          <div className="chat-input-bar">
+            {showMentionMenu && (
+              <div className="chat-mention-menu">
+                {['小歐', '小安', '小可'].map(name => (
+                  <button key={name} className="chat-mention-item" onMouseDown={e => {
+                    e.preventDefault()
+                    const idx = chatInput.lastIndexOf('@')
+                    setChatInput(chatInput.slice(0, idx) + `@${name} `)
+                    setShowMentionMenu(false)
+                    chatInputRef.current?.focus()
+                  }}>@{name}</button>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={chatInputRef}
+              className="chat-input"
+              value={chatInput}
+              placeholder={lang.chatPlaceholder}
+              rows={2}
+              onChange={e => {
+                setChatInput(e.target.value)
+                const val = e.target.value
+                const lastAt = val.lastIndexOf('@')
+                setShowMentionMenu(lastAt !== -1 && lastAt === val.length - 1)
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendChatMessage()
+                }
+                if (e.key === 'Escape') setShowMentionMenu(false)
+              }}
+            />
+            <button
+              className="chat-send-btn"
+              onClick={sendChatMessage}
+              disabled={chatSending || !chatInput.trim()}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div></ErrorBoundary>
+      ) : appMode === 'lancedb' ? (
         <ErrorBoundary><div className="lancedb-panel">
           {/* Left: scope tree */}
           <aside className="lancedb-scope-tree">

@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'path'
 import os from 'os'
-import { execSync } from 'child_process'
+import { execSync, execFile } from 'child_process'
 import { fileURLToPath } from 'url'
 import express from 'express'
 import cors from 'cors'
@@ -594,6 +594,68 @@ function startServer() {
       } catch (error) {
         res.status(500).json({ error: error.message })
       }
+    })
+
+    // ── Chat API ───────────────────────────────────────────────────────────────
+    const CHAT_DIR = path.join(os.homedir(), 'repos', 'kanban-agent-teams', 'chat')
+    const CHAT_FILE = path.join(CHAT_DIR, 'history.json')
+
+    function readChatHistory() {
+      if (!fs.existsSync(CHAT_FILE)) return []
+      try { return JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8')) } catch { return [] }
+    }
+
+    function writeChatHistory(messages) {
+      fs.mkdirSync(CHAT_DIR, { recursive: true })
+      fs.writeFileSync(CHAT_FILE, JSON.stringify(messages, null, 2))
+    }
+
+    server.get('/api/chat/messages', (req, res) => {
+      res.json(readChatHistory())
+    })
+
+    server.post('/api/chat/receive', (req, res) => {
+      const { from, text, replyToId } = req.body
+      if (!from || !text) return res.status(400).json({ error: 'from and text required' })
+      const messages = readChatHistory()
+      const msg = { id: Date.now().toString(), from, text, ts: new Date().toISOString(), replyToId: replyToId || null }
+      messages.push(msg)
+      writeChatHistory(messages)
+      res.json({ ok: true, id: msg.id })
+    })
+
+    server.post('/api/chat/send', (req, res) => {
+      const { text, from = 'user' } = req.body
+      if (!text) return res.status(400).json({ error: 'text required' })
+
+      const id = Date.now().toString()
+      const messages = readChatHistory()
+      const msg = { id, from, text, ts: new Date().toISOString() }
+      messages.push(msg)
+      writeChatHistory(messages)
+
+      const mentionMatch = text.match(/@(小歐|小安|小可)/)
+      if (mentionMatch) {
+        const agent = mentionMatch[1]
+        const replyInstr = `\n\n完成後請 curl 回覆 Agent Monitor：\ncurl -s -X POST http://localhost:3002/api/chat/receive -H 'Content-Type: application/json' -d '{"from":"${agent}","text":"YOUR_REPLY","replyToId":"${id}"}'`
+        const fullMsg = text + replyInstr
+
+        if (agent === '小歐') {
+          execFile('openclaw', ['agent', '--agent', 'main', '--message', fullMsg], { timeout: 10000 }, (err) => {
+            if (err) console.error('[chat] 小歐 route error:', err.message)
+          })
+        } else if (agent === '小安') {
+          execFile('python3', [path.join(os.homedir(), 'repos/kanban-agent-teams/scripts/ask_antigravity.py'), fullMsg], { timeout: 10000 }, (err) => {
+            if (err) console.error('[chat] 小安 route error:', err.message)
+          })
+        } else if (agent === '小可') {
+          execFile('curl', ['-s', '-X', 'POST', 'http://127.0.0.1:8787/upload', '-F', `id=${id}`, '-F', `text=${fullMsg}`, '-F', 'from=user'], { timeout: 10000 }, (err) => {
+            if (err) console.error('[chat] 小可 route error:', err.message)
+          })
+        }
+      }
+
+      res.json({ ok: true, id })
     })
 
     // MCP over SSE moved to standalone server at ~/repos/mcp-server (port 3003)
